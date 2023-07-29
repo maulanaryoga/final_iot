@@ -1,0 +1,95 @@
+#include <MQUnifiedsensor.h>
+#include <Wire.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <MySQL_Connection.h>
+#include <MySQL_Cursor.h>
+#include <toneAC.h>
+
+#define BUZZER_PIN 10
+
+// Konfigurasi WiFi
+const char* ssid = "hahahaha";
+const char* password = "hahahaha";
+
+// Konfigurasi MySQL
+IPAddress serverIP(192, 168, 1, 100); // Alamat IP server MySQL
+int serverPort = 3306; // Port server MySQL
+const char* dbUsername = "nama_user"; // Username MySQL
+const char* dbPassword = "password_user"; // Password MySQL
+const char* database = "nama_database"; // Nama database MySQL
+const char* table = "sensor_gas"; // Nama tabel untuk menyimpan nilai sensor gas
+
+// Konfigurasi pin sensor gas MQ-5
+#define MQ_PIN A0
+
+// Ambang batas sensor gas
+const int GAS_THRESHOLD = 500;
+
+// Deklarasi objek sensor gas
+MQUnifiedsensor gasSensor(MQ_PIN, MODE_ANALOG);
+
+// Deklarasi objek server web
+AsyncWebServer server(80);
+
+// Deklarasi objek koneksi dan cursor MySQL
+WiFiClient client;
+MySQL_Connection conn((Client *)&client);
+MySQL_Cursor cur(&conn);
+
+void setup() {
+  Serial.begin(9600);
+
+  // Menghubungkan ke jaringan WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+
+  // Menghubungkan ke server MySQL
+  if (conn.connect(serverIP, serverPort, dbUsername, dbPassword)) {
+    Serial.println("Connected to MySQL server");
+    conn.setCharset("utf8");
+    conn.setSchema(database);
+  } else {
+    Serial.println("Failed to connect to MySQL server");
+  }
+
+  // Konfigurasi server web
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    String html = "<html><body><h1>Sensor Gas MQ-5</h1>";
+    html += "<p>Gas Value: ";
+    html += gasSensor.readGas(MQ5);
+    html += "</p></body></html>";
+    request->send(200, "text/html", html);
+  });
+
+  // Mulai server web
+  server.begin();
+
+  pinMode(BUZZER_PIN, OUTPUT);
+}
+
+void loop() {
+  float gasValue = gasSensor.readGas(MQ5);
+  Serial.print("Gas Value: ");
+  Serial.println(gasValue);
+
+  if (gasValue > GAS_THRESHOLD) {
+    // Melebihi ambang batas, aktifkan buzzer
+    toneAC(BUZZER_PIN, 1000, 500); // Nada 1000Hz selama 500ms
+  } else {
+    // Di bawah ambang batas, matikan buzzer
+    noToneAC(BUZZER_PIN);
+  }
+
+  // Simpan nilai sensor gas ke tabel database
+  if (conn.connected()) {
+    String query = "INSERT INTO " + String(table) + " (gas_value) VALUES (" + String(gasValue) + ")";
+    cur.execute(query);
+  }
+
+  delay(1000);
+}
